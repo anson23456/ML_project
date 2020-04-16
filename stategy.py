@@ -78,7 +78,9 @@ def strategy_performance (nav_df):
 
 #%%
 os.chdir('C:/Users/wang/Documents/GitHub/ML_project')
-df = pd.read_csv('csv/eosSpot.csv',usecols=[3,4,5,6,7,8,11])
+digital_coin = ['bch','btc','eos','eth','ltc']
+i = 4
+df = pd.read_csv('csv/{}Spot.csv'.format(digital_coin[i]),usecols=[3,4,5,6,7,8,11])
 
 df['datetime'] = pd.to_datetime(df['datetime'])
 # data['datetime'] = data['datetime'].apply(lambda x: 
@@ -144,7 +146,7 @@ df = df.dropna()
 
 #%%
 
-df_temp = df.loc[:,feature_names + ['True_return']].copy()
+df_temp = df.loc[:,feature_names + ['Return', 'True_return']].copy()
 features = df_temp.loc[:, feature_names]
 split = int(0.7 * len(df))
 
@@ -152,7 +154,7 @@ split = int(0.7 * len(df))
 bench = df_temp['True_return'].iloc[:split].quantile(q=0.75)
 
 
-df_temp['Class'] = np.where(df_temp.loc[:, 'True_return'] -0.0005 > min(0.002,round(bench,4)), 1, 0)
+df_temp['Class'] = np.where(df_temp['True_return'] -0.0005 > min(0.002,round(bench,4)), 1, 0)
 targets = df_temp.loc[:, 'Class']
 
 feature_num = len(feature_names)
@@ -167,12 +169,24 @@ x_test = pd.DataFrame(ss.transform(x_test))
 
 
 
+model = RandomForestClassifier(random_state=10)
+tuned_parameter ={
+    "n_estimators": [10, 20, 30, 50],
+    "max_depth": [4, 6, 8, 10],
+    "criterion": ["gini", "entropy"]
+}
+cur_cv = TimeSeriesSplit(n_splits=10).split(x_train)
+score = 'roc_auc'
 
+clf = GridSearchCV(model,
+                   tuned_parameter,
+                   cv=cur_cv,
+                   scoring='%s' % score)
 
 #%%
-clf = RandomForestClassifier(random_state=10)
-#clf = XGBClassifier(random_state=10)
+
 clf.fit(x_train, y_train)
+
 
 y_pred = np.where(clf.predict(x_test) > 0, 1, 0)
 print(classification_report(y_pred,y_test))
@@ -182,15 +196,27 @@ output = pd.DataFrame()
 hold = np.where((y_pred_proba<0.55), 0, y_pred_proba)
 hold = np.where((hold>=0.5) & (hold<0.55), 0.1, hold)
 hold = np.where((hold>=0.55) & (hold<0.75), 0.75,hold)
-hold = np.where(hold>=0.75, 1, hold)
+hold = np.where(hold>0.75, 1, hold)
+###交易费用
+fee = pd.Series(hold).diff().fillna(0)
+fee.index = df.iloc[split:].index
+fee = abs(fee) * 0.0005
 
-output['Strategy'] = (hold * (df['True_return'].iloc[split:]-0.0005) + 1).cumprod()
+###滑点
+slip = pd.Series(hold).diff().fillna(0).clip(0,1)
+slip.index = df.iloc[split:].index
+slip = slip * (df['Return'].iloc[split:] - df['True_return'].iloc[split:] )
+
+
+
+output['Strategy'] = (hold * (df['Return'].iloc[split:]) - slip - fee + 1).cumprod()
 output['Buy & hold'] = (df['Return'].iloc[split:] + 1).cumprod()
-output.plot(legend=True,title='{}'.format(str(clf)[0:2]))
+output.plot(legend=True,title='{}_of_{}'.format(str(clf)[0:2],digital_coin[i]))
 
-
+Hold=pd.Series(hold).diff()
 print(Sharpe_ratio((hold * (df['True_return'].iloc[split:]-
                               0.0005)),
                     '30minute'))
 print(Max_drawdown(output['Strategy'].tolist()))
+
 strategy_performance (output.rename(columns={'Buy & hold':'benchmark'}))
