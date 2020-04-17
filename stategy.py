@@ -2,6 +2,7 @@ import os
 import pandas as pd
 import numpy as np
 import talib as ta
+import catboost as cb
 #from datetime import datetime
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
@@ -37,44 +38,44 @@ def Sharpe_ratio(return_series,freq="month"):
     ex_return = return_series - 0.04/n
     return (np.sqrt(n)*ex_return.mean()/ex_return.std())
 #%%
-#计算组合收益率分析:年化收益率、收益波动率、夏普比率、最大回撤
-def strategy_performance (nav_df):
+# #计算组合收益率分析:年化收益率、收益波动率、夏普比率、最大回撤
+# def strategy_performance (nav_df):
     
-    ##part1:根据回测净值计算相关指标的数据准备（日度数据）
-    nav_next = nav_df.shift(1)
-    return_df = nav_df/nav_next - 1  #计算净值变化率，即为日收益率,包含组合与基准
-    return_df = return_df.dropna()  #在计算净值变化率时，首日得到的是缺失值，需将其删除
+#     ##part1:根据回测净值计算相关指标的数据准备（日度数据）
+#     nav_next = nav_df.shift(1)
+#     return_df = nav_df/nav_next - 1  #计算净值变化率，即为日收益率,包含组合与基准
+#     return_df = return_df.dropna()  #在计算净值变化率时，首日得到的是缺失值，需将其删除
     
-    analyze=pd.DataFrame()  #用于存储计算的指标
+#     analyze=pd.DataFrame()  #用于存储计算的指标
     
-    ##part2:计算年化收益率
-    cum_return = np.exp(np.log1p(return_df).cumsum())-1   #计算整个回测期内的复利收益率
-    annual_return_df = (1+cum_return)**(365/len(return_df))-1  #计算年化收益率
-    analyze['annual_return'] = annual_return_df.iloc[-1]  #将年化收益率的Series赋值给数据框
+#     ##part2:计算年化收益率
+#     cum_return = np.exp(np.log1p(return_df).cumsum())-1   #计算整个回测期内的复利收益率
+#     annual_return_df = (1+cum_return)**(365/len(return_df))-1  #计算年化收益率
+#     analyze['annual_return'] = annual_return_df.iloc[-1]  #将年化收益率的Series赋值给数据框
     
-    #part3:计算收益波动率（以年为基准）
-    analyze['return_volatility']=return_df.std() * np.sqrt(365) #return中的收益率为日收益率，所以计算波动率转化为年时，需要乘上np.sqrt(252)
+#     #part3:计算收益波动率（以年为基准）
+#     analyze['return_volatility']=return_df.std() * np.sqrt(365) #return中的收益率为日收益率，所以计算波动率转化为年时，需要乘上np.sqrt(252)
     
-    #part4:计算夏普比率
-    risk_free = 0.03
-    return_risk_adj = return_df - risk_free
-    analyze['sharpe_ratio'] = return_risk_adj.mean()/np.std(return_risk_adj, ddof=1)
+#     #part4:计算夏普比率
+#     risk_free = 0.03
+#     return_risk_adj = return_df - risk_free
+#     analyze['sharpe_ratio'] = return_risk_adj.mean()/np.std(return_risk_adj, ddof=1)
     
-    #prat5:计算最大回撤
-    cumulative = np.exp(np.log1p(return_df).cumsum())*100  #计算累计收益率
-    max_return = cumulative.cummax()  #计算累计收益率的在各个时间段的最大值
-    analyze['max_drawdown'] = cumulative.sub(max_return).div(max_return).min()  #最大回撤一般小于0，越小，说明离1越远，各时间点与最大收益的差距越大
+#     #prat5:计算最大回撤
+#     cumulative = np.exp(np.log1p(return_df).cumsum())*100  #计算累计收益率
+#     max_return = cumulative.cummax()  #计算累计收益率的在各个时间段的最大值
+#     analyze['max_drawdown'] = cumulative.sub(max_return).div(max_return).min()  #最大回撤一般小于0，越小，说明离1越远，各时间点与最大收益的差距越大
     
-    #part6:计算相对指标
-    analyze['relative_return'] = analyze['annual_return']-analyze.loc['benchmark','annual_return'] #计算相对年化波动率
-    analyze['relative_volatility'] = analyze['return_volatility']-analyze.loc['benchmark','return_volatility'] #计算相对波动
-    analyze['relative_drawdown'] = analyze['max_drawdown']-analyze.loc['benchmark','max_drawdown'] #计算相对最大回撤
+#     #part6:计算相对指标
+#     analyze['relative_return'] = analyze['annual_return']-analyze.loc['benchmark','annual_return'] #计算相对年化波动率
+#     analyze['relative_volatility'] = analyze['return_volatility']-analyze.loc['benchmark','return_volatility'] #计算相对波动
+#     analyze['relative_drawdown'] = analyze['max_drawdown']-analyze.loc['benchmark','max_drawdown'] #计算相对最大回撤
     
-    #part6:计算信息比率
-    return_diff = return_df.sub(return_df['benchmark'],axis=0).std()*np.sqrt(365)  #计算策略与基准日收益差值的年化标准差
-    analyze['info_ratio'] = analyze['relative_return'].div(return_diff)
+#     #part6:计算信息比率
+#     return_diff = return_df.sub(return_df['benchmark'],axis=0).std()*np.sqrt(365)  #计算策略与基准日收益差值的年化标准差
+#     analyze['info_ratio'] = analyze['relative_return'].div(return_diff)
 
-    return analyze.T 
+#     return analyze.T 
 
 #%%
 os.chdir('C:/Users/wang/Documents/GitHub/ML_project')
@@ -168,25 +169,43 @@ x_train = pd.DataFrame(ss.transform(x_train))
 x_test = pd.DataFrame(ss.transform(x_test))
 
 
-
-model = RandomForestClassifier(random_state=10)
-tuned_parameter ={
-    "n_estimators": [10, 20, 30, 50],
-    "max_depth": [4, 6, 8, 10],
-    "criterion": ["gini", "entropy"]
-}
-cur_cv = TimeSeriesSplit(n_splits=10).split(x_train)
-score = 'roc_auc'
-
-clf = GridSearchCV(model,
-                   tuned_parameter,
-                   cv=cur_cv,
-                   scoring='%s' % score)
+###GridSearch效果不好，容易产生calss imbalance问题
+# =============================================================================
+# model = RandomForestClassifier(random_state=10)
+# tuned_parameter ={
+#     "n_estimators": [10, 20, 30, 50],
+#     "max_depth": [4, 6, 8, 10],
+#     "criterion": ["gini", "entropy"]
+# }
+# cur_cv = TimeSeriesSplit(n_splits=10).split(x_train)
+# score = 'f1_micro'
+# 
+# clf = GridSearchCV(model,
+#                    tuned_parameter,
+#                    cv=cur_cv,
+#                    scoring='%s' % score)
+# =============================================================================
 
 #%%
+clf = RandomForestClassifier(n_estimators=100,criterion='gini',random_state=10,n_jobs=-1)
+
+#clf = XGBClassifier(random_state=10)
+
+# =============================================================================
+# ##catboost想要有效果,保证depth至少12，itration越大越好，learning_rate保持0.1
+# ##运行时长大约1min以上才能有效果，因此放弃
+# clf = cb.CatBoostClassifier(iterations=100, depth=16, learning_rate=0.1, loss_function='Logloss',
+#                               logging_level='Verbose')
+# weight_array = np.where(y_train == 1, 1 - y_train.sum() / len(y_train),
+#                                 y_train.sum() / len(y_train))
+# 
+# clf.fit(x_train, y_train,plot=True,
+#         sample_weight=weight_array
+#         )
+# =============================================================================
+
 
 clf.fit(x_train, y_train)
-
 
 y_pred = np.where(clf.predict(x_test) > 0, 1, 0)
 print(classification_report(y_pred,y_test))
@@ -210,8 +229,12 @@ slip = slip * (df['Return'].iloc[split:] - df['True_return'].iloc[split:] )
 
 
 output['Strategy'] = (hold * (df['Return'].iloc[split:]) - slip - fee + 1).cumprod()
+output['Hold'] = hold
 output['Buy & hold'] = (df['Return'].iloc[split:] + 1).cumprod()
-output.plot(legend=True,title='{}_of_{}'.format(str(clf)[0:2],digital_coin[i]))
+output.plot(y=['Strategy','Buy & hold'],
+            legend=True,colormap='gist_rainbow',
+            title='{}_of_{}'.format(str(clf)[0:2],digital_coin[i])
+            )
 
 Hold=pd.Series(hold).diff()
 print(Sharpe_ratio((hold * (df['True_return'].iloc[split:]-
@@ -219,4 +242,4 @@ print(Sharpe_ratio((hold * (df['True_return'].iloc[split:]-
                     '30minute'))
 print(Max_drawdown(output['Strategy'].tolist()))
 
-strategy_performance (output.rename(columns={'Buy & hold':'benchmark'}))
+#strategy_performance (output.rename(columns={'Buy & hold':'benchmark'}))
