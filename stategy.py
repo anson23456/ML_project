@@ -38,6 +38,51 @@ def Sharpe_ratio(return_series,freq="month"):
     ex_return = return_series - 0.04/n
     return (np.sqrt(n)*ex_return.mean()/ex_return.std())
 #%%
+def Get_feature(df):
+    df['Pre_high'] = df['high'].shift(1)
+    df['Pre_low'] = df['low'].shift(1)
+    df['Pre_close'] = df['close'].shift(1)
+    df['Pre_volume'] = df['volume'].shift(1)
+    
+    feature_names = [
+        'Volume_Change', 'Market_info', 
+        'Market_info_2', 
+        'Market_info_3',
+        'Market_info_4',
+        'MA5', 'MA120', 'MA20', 'RSI', 'Corr', 'SAR', 'ADX',
+        'ATR', 'OBV'
+    ]
+    df['Market_info'] = np.where(df.Pre_close>df.Pre_close.rolling(120).median(),1,0)
+    df['Market_info_2'] = np.where(df.Pre_close<df.Pre_close.rolling(120).max()*0.9,1,0)
+    df['Market_info_3'] = np.where(df.Pre_close>df.Pre_close.rolling(120).min()*1.1,1,0)
+    df['Market_info_4'] = np.where(df.Pre_close.rolling(120).max()/df.Pre_close.rolling(120).min()>1.2,1,0)
+    df['Volume_Change'] = (df.volume / df.Pre_volume) - 1
+    df['MA20'] = df.Pre_close.rolling(window=20).mean()
+    df['MA5'] = ta.MA(df.Pre_close, 5)
+    df['MA120'] = ta.MA(df.Pre_close, 120)
+    df['RSI'] = ta.RSI(df.Pre_close, timeperiod=14)
+    df['Corr'] = df['MA20'].rolling(window=20).corr(df['Pre_close'])
+    df['SAR'] = ta.SAR(np.array(df['Pre_high']), np.array(df['Pre_low']), 0.2,
+                       0.2)
+    df['ADX'] = ta.ADX(np.array(df['Pre_high']),
+                       np.array(df['Pre_low']),
+                       np.array(df['Pre_close']),
+                       timeperiod=14)
+    df['ATR'] = ta.ATR(np.array(df['Pre_high']),
+                       np.array(df['Pre_low']),
+                       np.array(df['Pre_close']),
+                       timeperiod=14)
+    df['OBV'] = ta.OBV(df.Pre_close, df.Pre_volume)
+    
+    
+    df = df.loc[:, feature_names + ['symbol', 'Return','True_return']].replace(
+        np.inf, 10000).replace(
+            -np.inf,-10000)
+    df = df.dropna()
+    return df
+
+
+#%%
 # #计算组合收益率分析:年化收益率、收益波动率、夏普比率、最大回撤
 # def strategy_performance (nav_df):
     
@@ -79,89 +124,72 @@ def Sharpe_ratio(return_series,freq="month"):
 
 #%%
 os.chdir('C:/Users/wang/Documents/GitHub/ML_project')
-digital_coin = ['bch','btc','eos','eth','ltc']
-i = 4
-df = pd.read_csv('csv/{}Spot.csv'.format(digital_coin[i]),usecols=[3,4,5,6,7,8,11])
+digital_coins = ['bch','btc','eos','eth','ltc']
+list_store = []
+for digital_coin in digital_coins:
+    df = pd.read_csv('csv/{}Spot.csv'.format(digital_coin),usecols=[3,4,5,6,7,8,11])
+    df['symbol'] =  digital_coin
+    
+    df['datetime'] = pd.to_datetime(df['datetime'])
+    # data['datetime'] = data['datetime'].apply(lambda x: 
+    #     datetime.strptime(x,"%Y-%m-%d %H:%M:%S"))
+    df.set_index('datetime',inplace=True)
+    df = df.dropna()
+    #df.index = pd.DatetimeIndex(df.index)
+    df = df.resample('30min').aggregate({'close':'last',
+                                      'high':'max',
+                                      'low':'min',
+                                      'open':'first',
+                                      'volume':'sum',
+                                      'symbol':'last'
+                                      })
+    df = df.dropna()
+    df['Return'] = df['close'].pct_change()
+    df['True_return'] = df['close'] / df['open'] - 1
+    
+    #分别计算feature
+    df = Get_feature(df)
+    list_store.append(df)
 
-df['datetime'] = pd.to_datetime(df['datetime'])
-# data['datetime'] = data['datetime'].apply(lambda x: 
-#     datetime.strptime(x,"%Y-%m-%d %H:%M:%S"))
-df.set_index('datetime',inplace=True)
-df = df.dropna()
-df.index = pd.DatetimeIndex(df.index)
-df = df.resample('30min').aggregate({'close':'last',
-                                  'high':'max',
-                                  'low':'min',
-                                  'open':'first',
-                                  'volume':'sum',
-                                  'symbol':'last'
-                                  })
-df = df.dropna()
-df['Return'] = df['close'].pct_change()
-df['True_return'] = df['close'] / df['open'] - 1
 
+
+
+
+df = pd.concat(list_store)
+del list_store
+datelist = np.unique(df.index.date).tolist()
+
+df = df.reset_index().set_index(['datetime','symbol']).sort_index()
+df.loc[:pd.to_datetime('2019-7-31')]
+df.loc[:datelist[100]]
+cv = TimeSeriesSplit(n_splits=5,max_train_size=100)
 
 
 #%%
-df['Pre_high'] = df['high'].shift(1)
-df['Pre_low'] = df['low'].shift(1)
-df['Pre_close'] = df['close'].shift(1)
-df['Pre_volume'] = df['volume'].shift(1)
-
 feature_names = [
-    'Volume_Change', 'Market_info', 
-    'Market_info_2', 
-    'Market_info_3',
-    'Market_info_4',
-    'MA5', 'MA120', 'MA20', 'RSI', 'Corr', 'SAR', 'ADX',
-    'ATR', 'OBV'
-]
-df['Market_info'] = np.where(df.Pre_close>df.Pre_close.rolling(120).median(),1,0)
-df['Market_info_2'] = np.where(df.Pre_close<df.Pre_close.rolling(120).max()*0.9,1,0)
-df['Market_info_3'] = np.where(df.Pre_close>df.Pre_close.rolling(120).min()*1.1,1,0)
-df['Market_info_4'] = np.where(df.Pre_close.rolling(120).max()/df.Pre_close.rolling(120).min()>1.2,1,0)
-df['Volume_Change'] = (df.volume / df.Pre_volume) - 1
-df['MA20'] = df.Pre_close.rolling(window=20).mean()
-df['MA5'] = ta.MA(df.Pre_close, 5)
-df['MA120'] = ta.MA(df.Pre_close, 120)
-df['RSI'] = ta.RSI(df.Pre_close, timeperiod=14)
-df['Corr'] = df['MA20'].rolling(window=20).corr(df['Pre_close'])
-df['SAR'] = ta.SAR(np.array(df['Pre_high']), np.array(df['Pre_low']), 0.2,
-                   0.2)
-df['ADX'] = ta.ADX(np.array(df['Pre_high']),
-                   np.array(df['Pre_low']),
-                   np.array(df['Pre_close']),
-                   timeperiod=14)
-df['ATR'] = ta.ATR(np.array(df['Pre_high']),
-                   np.array(df['Pre_low']),
-                   np.array(df['Pre_close']),
-                   timeperiod=14)
-df['OBV'] = ta.OBV(df.Pre_close, df.Pre_volume)
-
-
-df = df.loc[:, feature_names + ['symbol', 'Return','True_return']].replace(
-    np.inf, 10000).replace(
-        -np.inf,-10000)
-df = df.dropna()
-
-
-#%%
-
+        'Volume_Change', 'Market_info', 
+        'Market_info_2', 
+        'Market_info_3',
+        'Market_info_4',
+        'MA5', 'MA120', 'MA20', 'RSI', 'Corr', 'SAR', 'ADX',
+        'ATR', 'OBV'
+    ]
 df_temp = df.loc[:,feature_names + ['Return', 'True_return']].copy()
 features = df_temp.loc[:, feature_names]
-split = int(0.7 * len(df))
+split = int(0.6 * len(datelist))
 
 
 bench = df_temp['True_return'].iloc[:split].quantile(q=0.75)
 
 
-df_temp['Class'] = np.where(df_temp['True_return'] -0.0005 > min(0.002,round(bench,4)), 1, 0)
+df_temp['Class'] = np.where(df_temp['True_return'] -0.0005 > 
+                            min(0.002,round(bench,4)), 1, 0)
 targets = df_temp.loc[:, 'Class']
 
 feature_num = len(feature_names)
-x_train, x_test, y_train, y_test = np.array(features[:split]).reshape(
-    -1, feature_num), np.array(features[split:]).reshape(
-        -1, feature_num),np.array(targets[:split]), np.array(targets[split:])
+x_train, x_test, y_train, y_test = np.array(features[:datelist[split]]).reshape(
+    -1, feature_num), np.array(features[datelist[split]:]).reshape(
+        -1, feature_num),np.array(targets[:datelist[split]]), np.array(targets[datelist[split]:])
         
 ss = StandardScaler()
 ss.fit(x_train)
@@ -210,36 +238,74 @@ clf.fit(x_train, y_train)
 y_pred = np.where(clf.predict(x_test) > 0, 1, 0)
 print(classification_report(y_pred,y_test))
 y_pred_proba = clf.predict_proba(x_test).reshape(-1,2)[:,1]
+
+
+
+#np.concatenate()
+
 #%%
-output = pd.DataFrame()
+output = df[datelist[split]:].loc[:,['Return', 'True_return']].copy()
 hold = np.where((y_pred_proba<0.55), 0, y_pred_proba)
 hold = np.where((hold>=0.5) & (hold<0.55), 0.1, hold)
 hold = np.where((hold>=0.55) & (hold<0.75), 0.75,hold)
 hold = np.where(hold>0.75, 1, hold)
+output['Hold'] = hold
+#权重,持仓进行组合的平均化，非持仓的为0
+weight_real = output.unstack().loc[:, ['Hold']].replace(
+    0,np.nan).count(axis=1).rdiv(1).replace(np.inf,0)
+output['Hold'] = output['Hold'] * weight_real
 ###交易费用
-fee = pd.Series(hold).diff().fillna(0)
-fee.index = df.iloc[split:].index
-fee = abs(fee) * 0.0005
+fee = output.unstack().loc[:, ['Hold']].diff().fillna(output.unstack().loc[:, ['Hold']])
+fee = fee.stack(1)
+fee = (abs(fee) * 0.0005 ).rename(columns={"Hold":"Fee"})
 
 ###滑点
-slip = pd.Series(hold).diff().fillna(0).clip(0,1)
-slip.index = df.iloc[split:].index
-slip = slip * (df['Return'].iloc[split:] - df['True_return'].iloc[split:] )
+###买时滑点
+slip_buy = output.unstack().loc[:, ['Hold']].diff().fillna(output.unstack().loc[:, ['Hold']]).clip(0,1)
+slip_buy = slip_buy.stack(1)
+slip_buy = pd.concat([slip_buy,
+                  (df['Return'][datelist[split]:] - 
+                   df['True_return'][datelist[split]:] ).rename("Slip")],
+                 axis=1)
+slip_buy = (slip_buy['Hold'] * slip_buy['Slip']).rename("Slip")
+###卖时滑点
+slip_sell = output.unstack().loc[:, ['Hold']].diff().fillna(output.unstack().loc[:, ['Hold']]).clip(-1,0).abs()
+slip_sell = slip_sell.stack(1)
+slip_sell = pd.concat([slip_sell,
+                  ((df['Return'][datelist[split]:]+1) / 
+                   (df['True_return'][datelist[split]:]+1) -1).rename("Slip")],
+                 axis=1)#开盘价除以前一日收盘价
+slip_sell = (slip_sell['Hold'] * slip_sell['Slip'] *(-1)).rename("Slip")
 
+slip = slip_buy + slip_sell
+del slip_buy, slip_sell
 
+output = pd.concat([output,fee,slip], axis=1)
 
-output['Strategy'] = (hold * (df['Return'].iloc[split:]) - slip - fee + 1).cumprod()
-output['Hold'] = hold
-output['Buy & hold'] = (df['Return'].iloc[split:] + 1).cumprod()
-output.plot(y=['Strategy','Buy & hold'],
+#%%
+
+#output.reset_index().groupby('datetime').aggregate({'Return':'sum'})
+
+output_final = pd.DataFrame(index=output.reset_index()['datetime'].unique())
+output['Strategy_return'] = (output['Hold'] * (output['Return']) - output['Slip'] - output['Fee'])
+
+output_final['Strategy'] = output.reset_index().groupby('datetime').aggregate(
+    {'Strategy_return':'sum'})
+output_final['Strategy'] = (output_final['Strategy'] + 1).cumprod()
+output_final['equal_weight'] = output.reset_index().groupby('datetime').aggregate(
+    {'Return':'sum'})/len(digital_coins)
+output_final['equal_weight'] = (output_final['equal_weight'] + 1).cumprod()
+
+output_final.plot(y=['Strategy','equal_weight'],
             legend=True,colormap='gist_rainbow',
-            title='{}_of_{}'.format(str(clf)[0:2],digital_coin[i])
+            title='{}_of_{}'.format(str(clf)[0:2],digital_coins)
             )
 
-Hold=pd.Series(hold).diff()
-print(Sharpe_ratio((hold * (df['True_return'].iloc[split:]-
-                              0.0005)),
-                    '30minute'))
-print(Max_drawdown(output['Strategy'].tolist()))
+
+
+# print(Sharpe_ratio((hold * (df['True_return'].iloc[datelist[split]:]-
+#                               0.0005)),
+#                     '30minute'))
+# print(Max_drawdown(output['Strategy'].tolist()))
 
 #strategy_performance (output.rename(columns={'Buy & hold':'benchmark'}))
