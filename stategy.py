@@ -22,7 +22,7 @@ def Max_drawdown(net_value):
 
 #%%
 #计算夏普比率
-def Sharpe_ratio(return_series,freq="month"):
+def Sharpe_ratio(return_series,freq="30minute"):
     if freq=="month":
         n = 12        
     elif freq=="week":
@@ -36,8 +36,62 @@ def Sharpe_ratio(return_series,freq="month"):
     elif freq=="30minute":
         n = 365*24*2
     ex_return = return_series - 0.04/n
-    return (np.sqrt(n)*ex_return.mean()/ex_return.std())
+    return (np.sqrt(n) * ex_return.mean() / ex_return.std())
+
 #%%
+###计算策略表现
+def Strategy_performance(df, benchmark="equal_weight",freq="30minute"):  
+    import statsmodels.api as sm
+    if freq=="month":
+        n = 12        
+    elif freq=="week":
+        n = 52
+    elif freq=="daily":
+        n = 365 
+    elif freq=='hour':
+        n = 365*24
+    elif freq=="minute":
+        n = 365*24*60 
+    elif freq=="30minute":
+        n = 365*24*2
+    
+    symbols = output_final.columns.tolist()
+    output = pd.DataFrame(index=symbols,
+                      columns=['Sharpe ratio', 'Max draw down', 
+                               'Annual return', 'Annual voltility',
+                               'Alpha', 'Beta',
+                               'Info_ratio', 'Relative max draw down'])
+    return_df = df.pct_change().fillna(0)
+    ###计算回撤和相对最大回撤
+    for symbol in symbols:
+        output.loc[symbol,'Max draw down'] = Max_drawdown(df[symbol].tolist())
+        if symbol==benchmark:
+            continue
+        else:
+            output.loc[symbol,'Relative max draw down'] = Max_drawdown(
+                (df[symbol].sub(df[benchmark],axis=0).add(1)).tolist())
+            
+            Y = return_df[symbol].to_numpy().reshape(-1,1)            
+            X = return_df[benchmark].to_numpy().reshape(-1,1)
+            X = sm.add_constant(X)
+            results = sm.OLS(Y, X).fit()
+            output.loc[symbol,['Alpha', 'Beta']] = results.params
+
+    ###计算夏普比率
+    output['Sharpe ratio'] = Sharpe_ratio(return_df, freq=freq)
+    ###计算信息比率
+    output['Info_ratio'] = np.sqrt(n) * return_df.sub(
+    return_df[benchmark],axis=0).mean() / return_df.sub(return_df[benchmark],axis=0).std()  
+    
+    ###计算年化收益率和年化波动率 
+    output['Annual return'] = (df.iloc[-1] ** (n / len(df))) -1
+    output['Annual voltility'] = return_df.std() * np.sqrt(n)
+    
+
+     
+    return output.T
+#%%
+###计算feature
 def Get_feature(df):
     df['Pre_high'] = df['high'].shift(1)
     df['Pre_low'] = df['low'].shift(1)
@@ -45,17 +99,18 @@ def Get_feature(df):
     df['Pre_volume'] = df['volume'].shift(1)
     
     feature_names = [
-        'Volume_Change', 'Market_info', 
+        'Volume_Change', 
+        'Market_info', 
         'Market_info_2', 
         'Market_info_3',
         'Market_info_4',
         'MA5', 'MA120', 'MA20', 'RSI', 'Corr', 'SAR', 'ADX',
         'ATR', 'OBV'
     ]
-    df['Market_info'] = np.where(df.Pre_close>df.Pre_close.rolling(120).median(),1,0)
-    df['Market_info_2'] = np.where(df.Pre_close<df.Pre_close.rolling(120).max()*0.9,1,0)
-    df['Market_info_3'] = np.where(df.Pre_close>df.Pre_close.rolling(120).min()*1.1,1,0)
-    df['Market_info_4'] = np.where(df.Pre_close.rolling(120).max()/df.Pre_close.rolling(120).min()>1.2,1,0)
+    df['Market_info'] = np.where(df.Pre_close > df.Pre_close.rolling(120).median(),1,0)
+    df['Market_info_2'] = np.where(df.Pre_close < df.Pre_close.rolling(120).max() * 0.9,1,0)
+    df['Market_info_3'] = np.where(df.Pre_close > df.Pre_close.rolling(120).min() * 1.1,1,0)
+    df['Market_info_4'] = np.where(df.Pre_close.rolling(120).max() / df.Pre_close.rolling(120).min() > 1.2,1,0)
     df['Volume_Change'] = (df.volume / df.Pre_volume) - 1
     df['MA20'] = df.Pre_close.rolling(window=20).mean()
     df['MA5'] = ta.MA(df.Pre_close, 5)
@@ -136,7 +191,7 @@ for digital_coin in digital_coins:
     df.set_index('datetime',inplace=True)
     df = df.dropna()
     #df.index = pd.DatetimeIndex(df.index)
-    df = df.resample('30min').aggregate({'close':'last',
+    df = df.resample('15min').aggregate({'close':'last',
                                       'high':'max',
                                       'low':'min',
                                       'open':'first',
@@ -167,7 +222,8 @@ cv = TimeSeriesSplit(n_splits=5,max_train_size=100)
 
 #%%
 feature_names = [
-        'Volume_Change', 'Market_info', 
+        'Volume_Change', 
+        'Market_info', 
         'Market_info_2', 
         'Market_info_3',
         'Market_info_4',
@@ -177,8 +233,8 @@ feature_names = [
 df_temp = df.loc[:,feature_names + ['Return', 'True_return']].copy()
 features = df_temp.loc[:, feature_names]
 split = int(0.6 * len(datelist))
-
-
+# step = 15
+# split += step
 bench = df_temp['True_return'].iloc[:split].quantile(q=0.75)
 
 
@@ -296,16 +352,19 @@ output_final['equal_weight'] = output.reset_index().groupby('datetime').aggregat
     {'Return':'sum'})/len(digital_coins)
 output_final['equal_weight'] = (output_final['equal_weight'] + 1).cumprod()
 
-output_final.plot(y=['Strategy','equal_weight'],
-            legend=True,colormap='gist_rainbow',
-            title='{}_of_{}'.format(str(clf)[0:2],digital_coins)
-            )
+fig = output_final.plot(y=['Strategy','equal_weight'],
+                legend=True,colormap='gist_rainbow',
+                title='{}_of_{}'.format(str(clf)[0:2],' '.join(digital_coins))
+                )
+fig = fig.get_figure()
+fig.savefig('netinv.jpg')
 
-
+print(Strategy_performance(output_final))
 
 # print(Sharpe_ratio((hold * (df['True_return'].iloc[datelist[split]:]-
 #                               0.0005)),
 #                     '30minute'))
 # print(Max_drawdown(output['Strategy'].tolist()))
-
+# print("Max draw down: {:.2f}".format(Max_drawdown(output_final['Strategy'].tolist())))
+# print("Sharpe ratio: {:.2f}".format(Sharpe_ratio(output_final['Strategy'].pct_change(),'30minute')))
 #strategy_performance (output.rename(columns={'Buy & hold':'benchmark'}))
