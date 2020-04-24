@@ -13,8 +13,6 @@ from sklearn.preprocessing import StandardScaler
 
 # %%
 # 计算最大回撤
-
-
 def Max_drawdown(net_value):
     end = np.argmax((np.maximum.accumulate(net_value) -
                      net_value)/np.maximum.accumulate(net_value))
@@ -25,9 +23,7 @@ def Max_drawdown(net_value):
 
 # %%
 # 计算夏普比率
-
-
-def Sharpe_ratio(return_series, freq="30minute"):
+def Sharpe_ratio(return_series, freq="30min"):
     if freq == "month":
         n = 12
     elif freq == "week":
@@ -36,18 +32,18 @@ def Sharpe_ratio(return_series, freq="30minute"):
         n = 365
     elif freq == 'hour':
         n = 365*24
-    elif freq == "minute":
+    elif freq == "min":
         n = 365*24*60
-    elif freq == "30minute":
+    elif freq == "15min":
+        n = 365*24*4
+    elif freq == "30min":
         n = 365*24*2
     ex_return = return_series - 0.04/n
     return (np.sqrt(n) * ex_return.mean() / ex_return.std())
 
 # %%
 # 计算策略表现
-
-
-def Strategy_performance(df, benchmark="equal_weight", freq="30minute"):
+def Strategy_performance(df, benchmark="equal_weight", freq="30min"):
     import statsmodels.api as sm
     if freq == "month":
         n = 12
@@ -57,19 +53,21 @@ def Strategy_performance(df, benchmark="equal_weight", freq="30minute"):
         n = 365
     elif freq == 'hour':
         n = 365*24
-    elif freq == "minute":
+    elif freq == "min":
         n = 365*24*60
-    elif freq == "30minute":
+    elif freq == "15min":
+        n = 365*24*4    
+    elif freq == "30min":
         n = 365*24*2
 
-    symbols = output_final.columns.tolist()
+    symbols = df.columns.tolist()
     output = pd.DataFrame(index=symbols,
                           columns=['Sharpe ratio', 'Max draw down',
                                    'Annual return', 'Annual voltility',
                                    'Alpha', 'Beta',
                                    'Info_ratio', 'Relative max draw down'])
     return_df = df.pct_change().fillna(0)
-    # 计算回撤和相对最大回撤
+    # 计算回撤和相对最大回撤,alpha,beta
     for symbol in symbols:
         output.loc[symbol, 'Max draw down'] = Max_drawdown(df[symbol].tolist())
         if symbol == benchmark:
@@ -83,13 +81,11 @@ def Strategy_performance(df, benchmark="equal_weight", freq="30minute"):
             X = sm.add_constant(X)
             results = sm.OLS(Y, X).fit()
             output.loc[symbol, ['Alpha', 'Beta']] = results.params
-
     # 计算夏普比率
     output['Sharpe ratio'] = Sharpe_ratio(return_df, freq=freq)
     # 计算信息比率
     output['Info_ratio'] = np.sqrt(n) * return_df.sub(
         return_df[benchmark], axis=0).mean() / return_df.sub(return_df[benchmark], axis=0).std()
-
     # 计算年化收益率和年化波动率
     output['Annual return'] = (df.iloc[-1] ** (n / len(df))) - 1
     output['Annual voltility'] = return_df.std() * np.sqrt(n)
@@ -97,8 +93,6 @@ def Strategy_performance(df, benchmark="equal_weight", freq="30minute"):
     return output.T
 # %%
 # 计算feature
-
-
 def Get_feature(df):
     df['Pre_high'] = df['high'].shift(1)
     df['Pre_low'] = df['low'].shift(1)
@@ -150,6 +144,7 @@ def Get_feature(df):
 os.chdir('C:/Users/wang/Documents/GitHub/ML_project')
 digital_coins = ['bch', 'btc', 'eos', 'eth', 'ltc']
 list_store = []
+freq = "15min"
 for digital_coin in digital_coins:
     df = pd.read_csv('csv/{}Spot.csv'.format(digital_coin),
                      usecols=[3, 4, 5, 6, 7, 8, 11])
@@ -161,13 +156,39 @@ for digital_coin in digital_coins:
     df.set_index('datetime', inplace=True)
     df = df.dropna()
     #df.index = pd.DatetimeIndex(df.index)
-    df = df.resample('30min').aggregate({'close': 'last',
-                                         'high': 'max',
-                                         'low': 'min',
-                                         'open': 'first',
-                                         'volume': 'sum',
-                                         'symbol': 'last'
-                                         })
+    df = df.resample(freq).aggregate({'close': 'last',
+                                      'high': 'max',
+                                      'low': 'min',
+                                      'open': 'first',
+                                      'volume': 'sum',
+                                      'symbol': 'last'
+                                      })
+    df = df.dropna()
+    df['Return'] = df['close'].pct_change()
+    df['True_return'] = df['close'] / df['open'] - 1
+
+    # 分别计算feature
+    df = Get_feature(df)
+    list_store.append(df)
+
+for digital_coin in digital_coins:
+    df = pd.read_csv('csv/{}_usd_.csv'.format(digital_coin),
+                     usecols=[3, 4, 5, 6, 7, 8, 11])
+    df['symbol'] = digital_coin
+
+    df['datetime'] = pd.to_datetime(df['datetime'])
+    # data['datetime'] = data['datetime'].apply(lambda x:
+    #     datetime.strptime(x,"%Y-%m-%d %H:%M:%S"))
+    df.set_index('datetime', inplace=True)
+    df = df.dropna()
+    #df.index = pd.DatetimeIndex(df.index)
+    df = df.resample(freq).aggregate({'close': 'last',
+                                      'high': 'max',
+                                      'low': 'min',
+                                      'open': 'first',
+                                      'volume': 'sum',
+                                      'symbol': 'last'
+                                      })
     df = df.dropna()
     df['Return'] = df['close'].pct_change()
     df['True_return'] = df['close'] / df['open'] - 1
@@ -177,9 +198,10 @@ for digital_coin in digital_coins:
     list_store.append(df)
 
 
-
 df = pd.concat(list_store)
 del list_store
+#删去重复日期
+df = df[~df.index.duplicated(keep='last')]
 datelist = np.unique(df.index.date).tolist()
 
 df = df.reset_index().set_index(['datetime', 'symbol']).sort_index()
@@ -200,13 +222,14 @@ feature_names = [
 df_temp = df.loc[:, feature_names + ['Return', 'True_return']].copy()
 features = df_temp.loc[:, feature_names]
 
-split = int(0.7 * len(datelist))
+# split = int(0.5 * len(datelist))
+split = max(365,int(0.5 * len(datelist)))
 date_split = datelist[split]
 # split += step
 
 feature_num = len(feature_names)
 
-step = 10
+step = 15
 
 clf = RandomForestClassifier(
     n_estimators=100, criterion='gini', random_state=10, n_jobs=-1)
@@ -216,7 +239,10 @@ y_pred_proba_series = pd.Series(0, index=df_temp[date_split:].index)
 for i in range((len(datelist)-split)//step + 1):
     print("We are at {:0>2d}/{:0>2d}".format(i +
                                              1, (len(datelist)-split)//step+1))
-    date_split = datelist[split + step * i]
+    try:
+        date_split = datelist[split + step * i]
+    except IndexError:
+        continue
     bench = df_temp['True_return'][:date_split].quantile(q=0.75)
     df_temp['Class'] = np.where(df_temp['True_return'] - 0.0005 >
                                 min(0.002, round(bench, 4)), 1, 0)
@@ -334,14 +360,21 @@ output_final['equal_weight'] = (output_final['equal_weight'] + 1).cumprod()
 
 fig = output_final.plot(y=['Strategy', 'equal_weight'],
                         legend=True, colormap='gist_rainbow',
-                        title='{}_of_{}'.format(
-                            str(clf)[0:2], ' '.join(digital_coins))
+                        title='{} of {}'.format(
+                            "Performance", ' '.join(digital_coins))
                         )
 fig = fig.get_figure()
 fig.savefig('netinv.png')
 
-print(Strategy_performance(output_final))
+print(Strategy_performance(output_final,benchmark="equal_weight",freq=freq))
 
+
+
+# (output_final[pd.to_datetime('2019-12-31'):]/output_final[pd.to_datetime('2020-01-01'):].iloc[0]).plot(y=['Strategy', 'equal_weight'],
+#                         legend=True, colormap='gist_rainbow',
+#                         title='{} of {} {}'.format(
+#                             "Performance", ' '.join(digital_coins),"from 2020")
+#                         )
 # print(Sharpe_ratio((hold * (df['True_return'].iloc[datelist[split]:]-
 #                               0.0005)),
 #                     '30minute'))
