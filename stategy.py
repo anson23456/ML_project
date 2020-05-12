@@ -4,6 +4,7 @@ import numpy as np
 import talib as ta
 #import catboost as cb
 #from datetime import datetime
+import matplotlib as plt
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 # from sklearn import metrics
@@ -141,7 +142,9 @@ def Get_feature(df):
     return df
 
 # %%
-os.chdir('C:/Users/wang/Documents/GitHub/ML_project')
+path =  os.path.split(os.path.realpath(__file__))[0]
+# os.chdir('C:/Users/wang/Documents/GitHub/ML_project')
+plt.style.use('ggplot')
 digital_coins = ['bch', 'btc', 'eos', 'eth', 'ltc']
 list_store = []
 freq = "15min"
